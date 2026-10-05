@@ -1,197 +1,320 @@
-// ===================== YEAR SPAN (SHARED) =====================
-var startYear = 2019;
-var endYear   = 2024;
-var startMonth = 4;   // April
-var endMonth   = 11;  // November
+var countryName = 'Limassol';
+var year = 2026;
 
-// Derived date range + seasonal filter
-var startDate = ee.Date.fromYMD(startYear, startMonth, 1);
-var endDate   = ee.Date.fromYMD(endYear, endMonth, 1).advance(1, 'month').advance(-1, 'day');
-var seasonalFilter = ee.Filter.calendarRange(startMonth, endMonth, 'month');
-
-
-// ===================== LULC CONFIG (unchanged) =====================
-var PROB_THRESHOLD = 0.0;
-var EXPAND_MONTHS  = 1;
-var USE_WORLDCOVER = true;
-
-var DW_COLLECTION_ID = 'GOOGLE/DYNAMICWORLD/V1';
-var WC_COLLECTION_ID = 'ESA/WorldCover/v200';
-
-var DW_CLASS_NAMES = [
-  'water','trees','grass','flooded_vegetation','crops',
-  'shrub_and_scrub','built','bare','snow_and_ice'
-];
-
-var DW_PALETTE = [
-  '419bdf','397d49','88b053','000000','e49635',
-  'dfc35a','c4281b','a59b8f','b39fe1'
-];
-
-
-// ===================== AOI =====================
+// Center map on Cyprus
+// 1. Center map and display boundary
 Map.centerObject(studyRegion, 12);
 Map.addLayer(studyRegion, {color: 'blue'}, 'Study Region');
 
 
-// ===================== HELPERS =====================
-// (This mask keeps original S2 band names; no renaming)
-function maskS2SR(img) {
-  var scl = img.select('SCL');
-  var good = scl.neq(0).and(scl.neq(1)).and(scl.neq(3))
-    .and(scl.neq(8)).and(scl.neq(9)).and(scl.neq(10)).and(scl.neq(11));
-  var qa60 = img.select('QA60');
-  var cloudBit = 1 << 10, cirrusBit = 1 << 11;
-  var qaMask = qa60.bitwiseAnd(cloudBit).eq(0).and(qa60.bitwiseAnd(cirrusBit).eq(0));
-  return img.updateMask(good).updateMask(qaMask)
-            .copyProperties(img, ['system:time_start']);
-}
-
-function m2(mm){ return (mm < 10 ? '0' + mm : '' + mm); }
 
 
-// ===================== LULC (multi-year composite) =====================
-function monthProb(geom, year, month){
-  var start = ee.Date.fromYMD(year, month, 1);
-  var end   = start.advance(1, 'month');
-  return ee.ImageCollection(DW_COLLECTION_ID)
-    .filterBounds(geom)
-    .filterDate(start, end)
-    .select(DW_CLASS_NAMES)
-    .mean();
-}
-
-function monthProbExpanded(geom, year, month, expandN){
-  var start = ee.Date.fromYMD(year, month, 1).advance(-expandN, 'month');
-  var end   = ee.Date.fromYMD(year, month, 1).advance(1 + expandN, 'month');
-  return ee.ImageCollection(DW_COLLECTION_ID)
-    .filterBounds(geom)
-    .filterDate(start, end)
-    .select(DW_CLASS_NAMES)
-    .mean();
-}
-
-function labelFromProbs(probImg){
-  var label = probImg.toArray().arrayArgmax().arrayGet([0]).rename('label').toInt8();
-  var top1  = probImg.reduce(ee.Reducer.max()).rename('top1_prob').unmask(0);
-  return label.addBands(top1);
-}
-
-function worldCoverDW(geom){
-  var WC_TO_DW = {10:1,20:5,30:2,40:4,50:6,60:7,70:8,80:0,90:3,95:1,100:2};
-  var wc = ee.ImageCollection(WC_COLLECTION_ID).first().select('Map').clip(geom);
-  var wcVals = Object.keys(WC_TO_DW).map(function(k){ return ee.Number.parse(k); });
-  var dwVals = Object.keys(WC_TO_DW).map(function(k){ return WC_TO_DW[k]; });
-  return wc.remap(wcVals, dwVals).rename('dw_from_wc').toInt8();
-}
-
-var YEARS  = ee.List.sequence(startYear, endYear);
-var MONTHS = ee.List.sequence(startMonth, endMonth);
-
-var baseProb = ee.ImageCollection.fromImages(
-  YEARS.map(function(y){
-    return MONTHS.map(function(m){ return monthProb(studyRegion, y, m); });
-  }).flatten()
-).mean();
-
-var baseLbl = labelFromProbs(baseProb);
-var outLbl = baseLbl;
-if (EXPAND_MONTHS > 0){
-  var expProb = ee.ImageCollection.fromImages(
-    YEARS.map(function(y){
-      return MONTHS.map(function(m){ return monthProbExpanded(studyRegion, y, m, EXPAND_MONTHS); });
-    }).flatten()
-  ).mean();
-  var expLbl = labelFromProbs(expProb);
-  outLbl = outLbl.unmask(expLbl);
-}
-if (USE_WORLDCOVER){ outLbl = outLbl.unmask(worldCoverDW(studyRegion)); }
-
-var lulc = ee.Image(outLbl.select('label')).clip(studyRegion);
-Map.addLayer(lulc, {min:0, max:8, palette: DW_PALETTE}, 'LULC 2019–2024');
+var startYear = 2020;
+var endYear = 2025;
+var startMonth = 4; // April
+var endMonth = 9; // Sep
+var startDate = ee.Date.fromYMD(startYear, startMonth, 1);
+var endDate = ee.Date.fromYMD(endYear, endMonth, 1).advance(1, 'month').advance(-1, 'day'); // last day of endMonth
+var seasonalFilter = ee.Filter.calendarRange(startMonth, endMonth, 'month');
 
 
-// ===================== NBR =====================
-var CLOUDY_PCT = 60;
-var SHOW_MONTHLY = false;
-var DO_EXPORT    = false;
+// Load MODIS MCD12Q1 for 2023
+var modisLC = ee.ImageCollection("MODIS/061/MCD12Q1")
+  .filterDate(startDate, endDate)
+  .select('LC_Type1')
+  .map(function(img) {
+    return img.clip(studyRegion).set('system:time_start', img.date().millis());
+  });
+var modeLC = modisLC.mode();
 
-function addNBR(img){
-  var nir  = img.select('B8').rename('nir');
-  var swir = img.select('B12').resample('bilinear').rename('swir');
-  var nbr  = nir.subtract(swir).divide(nir.add(swir)).rename('NBR');
-  return img.addBands(nbr);
-}
 
-var nbrMean = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+// Reclassify MODIS IGBP classes to fuel types
+var fuelRemap = modeLC.remap(
+  [17, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],  // MODIS Classes
+  [5, 4, 3, 4, 3, 3, 2, 2, 2, 2, 1, 5, 0, 0, 0, 5, 0]        // Corresponding Fuel Classes
+).rename('fuel_class');
+
+// Load Landsat 8 Surface Reflectance from 2018-2024 and apply scale factors
+var landsat = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
   .filterBounds(studyRegion)
   .filterDate(startDate, endDate)
-  .filter(seasonalFilter)
-  .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', CLOUDY_PCT))
-  .map(maskS2SR)
-  .map(addNBR)
-  .select('NBR')
-  .mean()
-  .clip(studyRegion);
+  .filter(seasonalFilter) 
+  .filter(ee.Filter.lt('CLOUD_COVER', 10))
+  .select(['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7'])
+  .median()
+  .multiply(0.0000275).add(-0.2); // Scale to reflectance
+ // .clip(studyRegion);  
 
-Map.addLayer(nbrMean, {min:-1,max:1,palette:['#7f0000','#b30000','#d7301f','#ef6548','#fdbb84','#fdd49e','#fef0d9']}, 'NBR mean');
+// Calculate NDVI
+var ndvi = landsat.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI');
 
-
-// ===================== NDVI (same structure & dates as NBR) =====================
-var ndviVis = {min: -0.5, max: 0.9, palette: ['#440154','#31688e','#35b779','#fde725']};
-
-function addNDVI(img){
-  var b4 = img.select('B4'); // red
-  var b8 = img.select('B8'); // nir
-  var ndvi = b8.subtract(b4).divide(b8.add(b4)).rename('NDVI');
-  return img.addBands(ndvi);
-}
-function meanNDVI(start, end, region){
-  var col = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterBounds(region)
-    .filterDate(start, end)
-    .filter(seasonalFilter)
-    .filter(ee.Filter.lte('CLOUDY_PIXEL_PERCENTAGE', CLOUDY_PCT))
-    .map(maskS2SR)
-    .map(addNDVI);
-  return col.select('NDVI').mean().clip(region);
-}
-var ndviMean = meanNDVI(startDate, endDate, studyRegion);
-print('NDVI MEAN composite', ndviMean);
-Map.addLayer(ndviMean, ndviVis, 'NDVI (mean)');
-
-
-// ===================== SRTM TERRAIN: elevation, slope, aspect =====================
+// Load SRTM DEM data (for slope and aspect)
 var dem = ee.Image('USGS/SRTMGL1_003').clip(studyRegion);
-var elevation = dem.rename('elevation');
-var slope = ee.Terrain.slope(dem).rename('slope');     // degrees
-var aspect = ee.Terrain.aspect(dem).rename('aspect');  // degrees (0–360, 0=north)
+var slope = ee.Terrain.slope(dem).rename('slope');
+var aspect = ee.Terrain.aspect(dem).rename('aspect');
 
-// Terrain visualization
-var elevVis = {min: 0, max: 2500, palette: ['#f7fcf5','#c7e9c0','#74c476','#238b45','#00441b']};
-var slopeVis = {min: 0, max: 60, palette: ['#f7fbff','#c6dbef','#6baed6','#2171b5','#08306b']};
-var aspectPalette = ['#ff0000','#ffff00','#00ff00','#0000ff','#ff0000']; // N→E→S→W→N
+// TRI
+var kernel = ee.Kernel.square({radius: 1, units: 'pixels', normalize: false});
+var meanElev = dem.reduceNeighborhood({reducer: ee.Reducer.mean(), kernel: kernel});
+var tri = dem.subtract(meanElev).abs().rename('tri');
 
-//Map.addLayer(elevation, elevVis, 'SRTM Elevation (~30 m)');
-//Map.addLayer(slope,     slopeVis, 'SRTM Slope (deg)');
-//Map.addLayer(aspect, {min:0,max:360,palette:aspectPalette}, 'SRTM Aspect (deg)');
+// Reprojection 
+var reprojectTo250m = function(image) {
+  return image.reproject({
+      crs: 'EPSG:4326', //32610
+      scale: 30
+    });
+};
 
-// (Optional) If you really want 10 m display, uncomment (note: this is interpolation only):
- var dem10    = dem.resample('bilinear').reproject({crs: 'EPSG:4326', scale: 10});
- var slope10  = ee.Terrain.slope(dem10).rename('slope_10m');
- var aspect10 = ee.Terrain.aspect(dem10).rename('aspect_10m');
-// Map.addLayer(slope10, slopeVis, 'SRTM Slope (interp 10 m)', false);
-// Map.addLayer(aspect10, {min:0,max:360,palette:aspectPalette}, 'SRTM Aspect (interp 10 m)', false);
+var landsat250 = reprojectTo250m(landsat);
+var ndvi250 = reprojectTo250m(ndvi);
+var slope250 = reprojectTo250m(slope);
+var aspect250 = reprojectTo250m(aspect);
+var tri250 = reprojectTo250m(tri);
+
+// Aspect & TRI Visualization
+var aspectPalette = [
+  'red',       // North (0°)
+  'yellow',    // East (90°)
+  'green',     // South (180°)
+  'blue',      // West (270°)
+  'red'        // Back to North (360°)
+];
+
+Map.addLayer(aspect250, {min: 0, max: 360, palette: aspectPalette}, 'Aspect');
+
+Map.addLayer(tri250, {
+  min: 0,
+  max: 10.8,
+  palette: ['#f7fcb9', '#addd8e', '#31a354', '#fecc5c', '#fd8d3c', '#f03b20', '#bd0026', '#800026', '#f7f7f7']
+}, 'TRI (0–10.8)');
+
+// Stacking Terrain Features
+var terrainStack = slope250.addBands(aspect250).addBands(tri250);
+var terrain_Stack = terrainStack .toFloat();  // Converts all bands to Float32*/
+
+// --- NDVI texture for structure separation (broadleaf vs shrubs) ---
+var ndvi8bit = ndvi250.multiply(255).toByte(); // GLCM expects 8-bit
+var ndviTex  = ndvi8bit.glcmTexture({size: 3}).select('NDVI_contrast');
+// Normalize texture to 0–1 for stable RF input
+var NDVI_contrast = ndviTex.unitScale(0, 50).clamp(0, 1).rename('NDVI_contrast');
 
 
-// ===================== LFMC (unchanged, uses separate mask name) =====================
+//  Stacking all features (Add slope and aspect to Landsat data)
+var landsatStack = landsat250
+  .addBands(ndvi250)
+  .addBands(NDVI_contrast)
+  .addBands(slope250)
+  .addBands(aspect250)
+  .addBands(tri250);
+var landsatStackNorm = landsatStack.unitScale(0, 1); // basic normalization between 0-1
+
+var fuelRemap250 = reprojectTo250m(fuelRemap);
+var fuelRemapFilled = fuelRemap250.unmask(0); // Fill missing areas with "0" (non-fuel or unknown class)
+
+
+// Convert the fuel class image to a FeatureCollection of points
+var fuelPoints = fuelRemapFilled.addBands(landsatStackNorm).stratifiedSample({
+    numPoints: 1800,
+    classBand: 'fuel_class',
+    classValues: [0, 1, 2, 3, 4, 5], 
+    classPoints: [120, 280, 280, 340, 220, 120],
+    region: studyRegion,
+    scale: 250,
+    seed: 123,
+    geometries: true,
+    tileScale: 8
+});
+
+//print('Sample Points:', fuelPoints.size());
+
+// Split training data into training and testing sets
+var withRandom = fuelPoints.randomColumn('random', 50);
+var trainSet = withRandom.filter(ee.Filter.lt('random', 0.7));
+var testSet = withRandom.filter(ee.Filter.gte('random', 0.7));
+
+// Define input bands for classification (Landsat + NDVI + slope + aspect)
+var inputBands = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7', 'NDVI', 'NDVI_contrast', 'slope', 'aspect','tri'];
+
+// RF Classifier (deterministic)
+var rf_classifier = ee.Classifier.smileRandomForest({
+    numberOfTrees: 160,
+    seed: 42
+  }).train({
+    features: trainSet,
+    classProperty: 'fuel_class',
+    inputProperties: inputBands
+  });
+
+// Apply RF classifier to Landsat data
+var rf_classified = landsatStack.classify(rf_classifier);
+
+// Smoothing Filter
+var modeFilter = ee.Kernel.square({radius: 1});
+var smoothed_rf = rf_classified.focal_mode({kernel: modeFilter, iterations: 1});
+
+var smoothed_rf250 = reprojectTo250m(smoothed_rf);
+Map.addLayer(smoothed_rf250, {min: 0, max: 5, palette: ['gray', 'yellow', 'brown', 'lightgreen', 'darkgreen', 'blue']}, 'Smoothed RF Classification');
+
+// Accuracy Assessment
+var rfValidated = testSet.classify(rf_classifier);
+var rfMatrix = rfValidated.errorMatrix('fuel_class', 'classification');
+print('RF Confusion Matrix:', rfMatrix);
+print('RF Overall Accuracy:', rfMatrix.accuracy());
+print('RF Kappa:', rfMatrix.kappa());
+print('Recall:', rfMatrix.producersAccuracy());
+print('Precision:', rfMatrix.consumersAccuracy());
+
+
+// Visualize the classified results
+//Map.addLayer(rf_classified, {min: 0, max: 5, palette: ['gray', 'yellow', 'brown', 'lightgreen', 'darkgreen', 'blue']}, 'RF Classification');
+
+
+var masked_rf = smoothed_rf250.clip(studyRegion).selfMask();
+
+//-------------------------------------------------------------//
+// Fuel Load Estimation
+// Load GEDI L4A image
+var gedi = ee.Image("LARSE/GEDI/GEDI04_B_002") // Image- Already shows a product based on 2019-2020 years
+  .select(['MU', 'QF'])
+  .clip(studyRegion);
+  
+// Select MU and QF bands
+var agb = gedi.select('MU');  // Mean Biomass in Mg/ha
+var quality = gedi.select('QF'); // Quality Flag 
+
+// Apply quality mask (QF == 2) to filter out low quality data
+var agbMasked = agb.updateMask(quality.eq(2));
+
+// Add AGB band to existing features
+var agbBand = agbMasked.rename('AGB');
+var featuresWithAGB = landsatStackNorm.addBands(agbBand);
+
+/*// Sample training data for regression to predict values where AGB is missing
+var trainingSamples = featuresWithAGB.select(['SR_B5','SR_B4','SR_B6','SR_B7','NDVI','slope','aspect','tri','AGB'])
+  .sample({
+    region: studyRegion,
+    scale: 250,
+    numPixels: 4000,
+    seed: 35
+  });*/
+  
+var agbMask = agbBand.mask(); // mask of valid GEDI
+var featuresOnAGB = landsatStackNorm
+  .addBands(agbBand)           // has AGB
+  .updateMask(agbMask);        // keep only valid AGB pixels
+
+// ---- UPDATED: include SWIR & TRI (correlate with biomass/structure) ----
+var agbPredictors = ['SR_B4','SR_B5','SR_B6','SR_B7','NDVI','slope','aspect','tri','AGB'];
+
+// Larger sample for stability; filter not-null explicitly
+var trainingSamples = featuresOnAGB.select(agbPredictors)
+  .sample({
+    region: studyRegion,
+    scale: 250,
+    numPixels: 8000,
+    seed: 35
+  })
+  .filter(ee.Filter.notNull(agbPredictors));
+  
+//print('Training sample size:', trainingSamples.size());
+
+// Split the data: 70% training, 30% validation
+var split = 0.7;
+var withRandom = trainingSamples.randomColumn('random', 123);
+var training = withRandom.filter(ee.Filter.lt('random', split));
+var validation = withRandom.filter(ee.Filter.gte('random', split));
+
+var agbRF = ee.Classifier.smileRandomForest({
+    numberOfTrees: 200,
+    seed: 42
+  })
+  .setOutputMode('REGRESSION')
+  .train({
+    features: training,
+    classProperty: 'AGB',
+    inputProperties: ['SR_B5','SR_B4','SR_B6','SR_B7','NDVI','slope','aspect','tri']
+  });
+  
+
+
+// Predict AGB everywhere features exist (your original way)
+var agbPredicted = landsatStackNorm
+  .select(['SR_B4','SR_B5','SR_B6','SR_B7','NDVI','slope','aspect','tri'])
+  .classify(agbRF)
+  .rename('AGB_RF');
+
+// Fill missing GEDI with RF predictions (unchanged)
+var agbFilledRF = agbMasked.unmask(agbPredicted);
+var agbFinal250m = reprojectTo250m(agbFilledRF);
+
+// -------- Validation metrics (NULL-SAFE) --------
+var validationPred = validation.classify(agbRF);
+
+// Keep rows where both truth & pred exist
+var valClean = validationPred.filter(
+  ee.Filter.and(
+    ee.Filter.notNull(['AGB']),
+    ee.Filter.notNull(['classification'])
+  )
+);
+
+// Map errors safely
+var validatedWithErrors = valClean.map(function(f) {
+  var predicted = ee.Number(f.get('classification'));
+  var actual    = ee.Number(f.get('AGB'));
+  var error     = predicted.subtract(actual);
+  return f.set({
+    error: error,
+    absError: error.abs(),
+    sqError: error.pow(2)
+  });
+});
+
+// Metrics
+var mae = validatedWithErrors.reduceColumns(
+  ee.Reducer.mean(), ['absError']
+).get('mean');
+
+var mse = validatedWithErrors.reduceColumns(
+  ee.Reducer.mean(), ['sqError']
+).get('mean');
+
+var agbVar = valClean.reduceColumns(
+  ee.Reducer.variance(), ['AGB']
+).get('variance');
+
+var rmse = ee.Number(mse).sqrt();
+var r2   = ee.Number(1).subtract(ee.Number(mse).divide(agbVar));
+
+// Print
+print('MAE (Mg/ha):', mae);
+print('RMSE (Mg/ha):', rmse);
+print('R²:', r2);
+
+// Map layer (unchanged)
+Map.addLayer(agbFinal250m, {min:0, max:90, palette:['white','yellowgreen','green','darkgreen']}, 'Filled AGB Layer (250m)');
+
+Export.image.toDrive({
+  image: agbFinal250m,
+  description: 'AGB_estimation_sacramento',
+  folder: 'GEE_Exports',  // Optional: specify folder
+  fileNamePrefix: 'AGB_estimation_sacramento',
+  region: studyRegion,
+  scale: 30,
+  crs: 'EPSG:4326',  // Optional: specify CRS if needed
+  fileFormat: 'GeoTIFF'
+});
+// --------- Fuel Moisture ----------
 var years  = ee.List.sequence(startYear, endYear);
 var months = ee.List.sequence(startMonth, endMonth);
 
+// --------------------------- LAND MASK -----------------------------
 var worldCover = ee.ImageCollection('ESA/WorldCover/v200').first();
 var landMask   = worldCover.select('Map').neq(80).rename('land').clip(studyRegion);
 
-function maskS2SR_LFMC(image) {
+// =========================== HELPERS ==============================
+function maskS2SR(image) {
   var qa = image.select('QA60');
   var cloudBitMask  = 1 << 10;
   var cirrusBitMask = 1 << 11;
@@ -209,9 +332,9 @@ function getS2Composite(date, geom) {
     .filterBounds(geom)
     .filterDate(start, end)
     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60))
-    .map(maskS2SR_LFMC)
+    .map(maskS2SR)
     .median()
-    .clip(geom);
+    .clip(geom); // no landMask here
 }
 
 function getS1Composite(date, geom) {
@@ -271,15 +394,17 @@ function renameWithSuffix(img, suffix) {
   return img.select(names, newNames);
 }
 
+// Check that all needed bands exist in available band list (no reduceRegion used)
 function allBandsPresent(availableBandNames, neededNames) {
   var flags = ee.List(neededNames).map(function(b) {
     var present = ee.List(availableBandNames).contains(ee.String(b));
     return ee.Number(ee.Algorithms.If(present, 1, 0));
   });
   var sum = ee.Number(ee.List(flags).reduce(ee.Reducer.sum()));
-  return sum.eq(neededNames.length);
+  return sum.eq(neededNames.length); // ee.Boolean
 }
 
+// ================== MONTHLY LFMC BUILDER (NO REDUCE REGIONS) ==================
 function buildMonthlyLFMC(date, geom) {
   var opt = getS2Composite(date, geom);
   var sar = getS1Composite(date, geom);
@@ -291,6 +416,7 @@ function buildMonthlyLFMC(date, geom) {
   var hasSar = allBandsPresent(sarBN, ['vv','vh']);
   var okSensors = hasOpt.and(hasSar);
 
+  // If both sensors present, build LFMC_t masked to vegetation; else return empty
   return ee.Image(ee.Algorithms.If(
     okSensors,
     (function () {
@@ -303,6 +429,7 @@ function buildMonthlyLFMC(date, geom) {
         .addBands(static_t)
         .clip(geom);
 
+      // LFMC proxy (uncalibrated)
       var ndvi_t = out.select('ndvi_t');
       var ndwi_t = out.select('ndwi_t');
       var vh_t   = out.select('vh_t');
@@ -317,6 +444,7 @@ function buildMonthlyLFMC(date, geom) {
         .multiply(100)
         .rename('lfmc_t');
 
+      // Vegetation mask only; NO landMask, NO reduceRegion
       var lfmcMasked = lfmc_t.updateMask(ndvi_t.gte(0.25));
 
       return lfmcMasked
@@ -330,6 +458,7 @@ function buildMonthlyLFMC(date, geom) {
   ));
 }
 
+// ================== BUILD COLLECTION (2015–2024 Apr–Sep) ==================
 var imgList = years.map(function(y){
   y = ee.Number(y);
   var perYearImgs = months.map(function(m){
@@ -341,16 +470,22 @@ var imgList = years.map(function(y){
 }).flatten();
 
 var icRaw = ee.ImageCollection.fromImages(imgList);
+// Keep only images that actually have lfmc_t band
 var ic = icRaw.filter(ee.Filter.listContains('system:band_names', 'lfmc_t'));
 
+print('Valid monthly images kept:', ic.size());
+
+// ===================== AGGREGATION & DISPLAY =======================
+// Mean LFMC across valid months; now it's safe to apply landMask
 var lfmcMean = ic.select('lfmc_t').mean()
   .updateMask(landMask)
   .clip(studyRegion);
 
+// Percentile thresholds & classes (computed ONCE)
 var pctMean = lfmcMean.reduceRegion({
   reducer: ee.Reducer.percentile([10, 40, 70]),
   geometry: studyRegion,
-  scale: 10,
+  scale: 250,
   maxPixels: 1e13,
   bestEffort: true,
   tileScale: 8
@@ -362,105 +497,99 @@ var p70m = ee.Number(ee.Algorithms.If(pctMean.get('lfmc_t_p70'), pctMean.get('lf
 var classesMean = lfmcMean.expression(
   '(lf < t1) ? 0 : (lf < t2) ? 1 : (lf < t3) ? 2 : 3',
   { lf: lfmcMean, t1: p10m, t2: p40m, t3: p70m }
-).rename('lfmc_class').clip(studyRegion).toByte();
+).rename('lfmc_class').toByte().clip(studyRegion);
 
+// “Dry union”: threshold each monthly LFMC by the single global p10 (p10m) and union
+var dryIC = ic.select('lfmc_t').map(function(img){
+  return img.lt(p10m).toByte().rename('dry').copyProperties(img, ['system:time_start', 'date', 'Y', 'M']);
+});
+var unionDry = ee.ImageCollection(dryIC).max()
+  .updateMask(landMask)
+  .clip(studyRegion);
+
+// Map layers
 var classPalette = ['#8b0000', '#ff8c00', '#f0e442', '#1a9850'];
-Map.addLayer(classesMean, {min: 0, max: 3, palette: classPalette}, 'LFMC classes (Apr–Nov 2019–2024)');
+Map.addLayer(classesMean, {min: 0, max: 3, palette: classPalette}, 'LFMC classes (Apr–Sep 2015–2024)');
+Map.addLayer(unionDry.selfMask(), {palette: ['#ff0000']}, 'Dry areas union (Apr–Sep 2015–2024)');
 
 
-//-------- LST (Landsat 8/9) --------//
-var proj4326 = 'EPSG:4326';
-var maxPixels = 1e13;
+//------------- Susceptibility -----------------//
+var baseProj = agbFinal250m.projection();
+var classesMean_250m = classesMean.resample('bilinear').reproject(baseProj).clip(studyRegion);
 
-function maskL1(img) {
-  var qa = img.select('QA_PIXEL');
-  var mask = qa.bitwiseAnd(1<<3).eq(0)
-    .and(qa.bitwiseAnd(1<<4).eq(0))
-    .and(qa.bitwiseAnd(1<<2).eq(0))
-    .and(qa.bitwiseAnd(1<<5).eq(0));
-  return img.updateMask(mask);
-}
-function toaRefl(img, b){ var m=ee.Number(img.get('REFLECTANCE_MULT_BAND_'+b));
-  var a=ee.Number(img.get('REFLECTANCE_ADD_BAND_'+b));
-  var se=ee.Number(img.get('SUN_ELEVATION'));
-  return img.select('B'+b).multiply(m).add(a).divide(se.multiply(Math.PI/180).sin()).rename('R'+b);
-}
-function toaRadB10(img){
-  var m=ee.Number(img.get('RADIANCE_MULT_BAND_10'));
-  var a=ee.Number(img.get('RADIANCE_ADD_BAND_10'));
-  return img.select('B10').multiply(m).add(a).rename('Rad10');
-}
-function btFromRad(img){
-  var K1=ee.Number(img.get('K1_CONSTANT_BAND_10'));
-  var K2=ee.Number(img.get('K2_CONSTANT_BAND_10'));
-  var rad=img.select('Rad10');
-  return ee.Image.constant(K2).divide(ee.Image.constant(K1).divide(rad).add(1).log()).rename('BT_K');
-}
-function emissivityFromNDVI(ndvi){
-  var pv = ndvi.subtract(0.2).divide(0.3).clamp(0,1).pow(2);
-  return ee.Image(0.986).add(pv.multiply(0.004)).clamp(0.97,0.995).rename('emis');
-}
-function lstFromBT(btK, emis){
-  var lambda_um=10.895, rho=14380.0;
-  var corr = ee.Image(1).add(ee.Image(lambda_um).multiply(btK).divide(rho).multiply(emis.log()));
-  return btK.divide(corr).subtract(273.15).rename('LST');
-}
-function processL1(img){
-  img=maskL1(img).clip(studyRegion);
-  var r4=toaRefl(img,4), r5=toaRefl(img,5);
-  var ndvi=r5.subtract(r4).divide(r5.add(r4)).rename('NDVI');
-  var rad10=toaRadB10(img);
-  var btK=btFromRad(img.addBands(rad10));
-  var emis=emissivityFromNDVI(ndvi);
-  var lst=lstFromBT(btK, emis);
-  return lst.updateMask(lst.gte(-50).and(lst.lte(70)))
-            .copyProperties(img,['system:time_start']);
-}
+var FuelType = smoothed_rf250.rename('FuelType').toFloat().reproject(baseProj);
+var AGB      = agbFinal250m.rename('AGB').toFloat().reproject(baseProj);
+var FM       = classesMean.rename('FM').toFloat().reproject(baseProj);
 
-var L8 = ee.ImageCollection('LANDSAT/LC08/C02/T1')
-  .filterBounds(studyRegion).filterDate(startDate,endDate)
-  .filter(seasonalFilter).map(processL1);
-var L9 = ee.ImageCollection('LANDSAT/LC09/C02/T1')
-  .filterBounds(studyRegion).filterDate(startDate,endDate)
-  .filter(seasonalFilter).map(processL1);
+// ⬇ add both proxies to the stack, plus new predictors (NDVI mean, LST mean, precipitation seasonal sum)
+// --- NDVI seasonal mean from Sentinel-2 (Apr–Sep across years) ---
+var s2NDVImean = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterBounds(studyRegion)
+  .filterDate(startDate, endDate)
+  .filter(seasonalFilter)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 60))
+  .map(maskS2SR)
+  .map(function(img){
+    return img.normalizedDifference(['nir','red']).rename('NDVI');
+  })
+  .mean()
+  .rename('NDVI_mean')
+  .toFloat()
+  .reproject(baseProj)
+  .clip(studyRegion);
 
-var lstMean = L8.merge(L9).mean().rename('LST_mean').toFloat().clip(studyRegion);
+// --- MODIS LST (8-day, daytime) mean in °C (Apr–Sep across years) ---
+function maskMOD11A2(img){
+  var lst = img.select('LST_Day_1km').multiply(0.02).subtract(273.15); // Kelvin to Celsius
+  var qa  = img.select('QC_Day');
+  var good = qa.bitwiseAnd(1).eq(0); // basic good-quality filter
+  return lst.updateMask(good);
+}
+var lstMean = ee.ImageCollection('MODIS/061/MOD11A2')
+  .filterDate(startDate, endDate)
+  .filter(ee.Filter.calendarRange(startMonth, endMonth, 'month'))
+  .map(maskMOD11A2)
+  .mean()
+  .rename('LST_mean')
+  .toFloat()
+  .reproject(baseProj)
+  .clip(studyRegion);
 
-print('LST mean stats', lstMean.reduceRegion({
-  reducer: ee.Reducer.minMax().combine(ee.Reducer.mean(),'',true),
-  geometry: studyRegion, scale:10, maxPixels:maxPixels, bestEffort: true,
-  tileScale: 8
+// --- CHIRPS precipitation: seasonal total per year → mean across years (mar–Sep) ---
+var yearList = ee.List.sequence(startYear, endYear);
+var perYearSeason = ee.ImageCollection(yearList.map(function(y){
+  y = ee.Number(y);
+  var ys = ee.Date.fromYMD(y, startMonth, 1);
+  var ye = ee.Date.fromYMD(y, endMonth, 1).advance(1,'month').advance(-1,'day');
+  var sum = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
+    .filterBounds(studyRegion)
+    .filterDate(ys, ye)
+    .select('precipitation')
+    .sum()
+    .rename('Prcp_season');
+  return sum.set('year', y);
 }));
-Map.addLayer(lstMean,{min:20,max:45,palette:['blue','cyan','yellow','orange','red']},'LST mean °C');
-
+var prcpSeasonMean = perYearSeason.mean()
+  .rename('Prcp_cumsum')
+  .toFloat()
+  .reproject(baseProj)
+  .clip(studyRegion);
 
 // Final predictor stack
-var fuelStack = lulc
-  .addBands(nbrMean)
-  .addBands(classesMean)
-  .addBands(ndviMean)
+var fuelStack = FuelType
+  .addBands(AGB)
+  .addBands(FM)
+  .addBands(s2NDVImean)
   .addBands(lstMean)
-  //.addBands(elevation)
-  .addBands(slope10)
-  .addBands(aspect10);
+ // .addBands(prcpSeasonMean)
+  .addBands(slope250)
+  .addBands(aspect250);
 
-// --- Check projection (resolution) of each predictor layer ---
-
-/*print('LULC:', lulc.projection(), lulc.projection().nominalScale());
-print('NBR mean:', nbrMean.projection(), nbrMean.projection().nominalScale());
-print('NDVI mean:', ndviMean.projection(), ndviMean.projection().nominalScale());
-print('LFMC classes:', classesMean.projection(), classesMean.projection().nominalScale());
-print('LST (native):', lstMean.projection(), lstMean.projection().nominalScale());
-print('Slope (DEM):', slope10.projection(), slope10.projection().nominalScale());
-print('Aspect (DEM):', aspect10.projection(), aspect10.projection().nominalScale());*/
-
-
-
-
-var nonWaterMask = lulc.neq(0);
+var nonWaterMask = FuelType.neq(5);
 var filled = fuelStack.updateMask(nonWaterMask).unmask(0);
 var predictors = fuelStack.bandNames();
  
+// Fire label Generation
 var labelStart = ee.Date.fromYMD(startYear, startMonth, 1); // 2015-04-01
 var labelEnd   = ee.Date.fromYMD(endYear,   endMonth, 1).advance(1, 'month').advance(-1, 'day'); // 2024-09-30
 
@@ -489,22 +618,33 @@ var fireLabelClean = fireBinary
   .focal_mode(1)                                                 // small speckle cleanup
   .updateMask(fireBinary.connectedPixelCount(100, true).gte(2)); 
 
-var fireLabel = fireLabelClean.rename('firelabel');
+var fireLabel = reprojectTo250m(fireLabelClean).rename('firelabel');
 
 Map.addLayer(fireLabel, {min:0, max:1, palette:['white','black']}, 'Fire Label (clean, season-aligned)');
 
 var lblHist = fireLabel.reduceRegion({
   reducer: ee.Reducer.frequencyHistogram(),
   geometry: studyRegion,
-  scale: 10,
-  maxPixels: 1e13,
-  bestEffort: true,
-  tileScale: 8
+  scale: 250,
+  maxPixels: 1e9
 });
 print('fireLabel histogram (0=no-fire,1=fire):', lblHist);
 
-var SAMPLE_SCALE = 10;     // keep aligned with your grid
-var MAX_PER_CLASS = 1000;  // cap to control memory (tune if needed)
+// Export fire label to Google Drive
+Export.image.toDrive({
+  image: fireLabel,
+  description: 'fire_label_Sacramento_2015_2024',
+  folder: 'GEE_exports',       // optional folder in Drive
+  fileNamePrefix: 'fire_label_Sacramento_2015_2024',
+  region: studyRegion,
+  scale: 30,                   // your Sentinel-2 grid (or 250 if you want)
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
+
+
+var SAMPLE_SCALE = 250;     // keep aligned with your grid
+var MAX_PER_CLASS = 12000;  // cap to control memory (tune if needed)
 var SPLIT = 0.7;            // 70% train / 30% test
 
 // Masks
@@ -549,7 +689,7 @@ print('Test samples (balanced total):',      testData.size());
 print('Train class histogram (0=no-fire,1=fire):', trainingData.aggregate_histogram('label'));
 print('Test class histogram  (0=no-fire,1=fire):', testData.aggregate_histogram('label'));
 
-// === Train & evaluate (rest stays the same) ===
+// === Training===
 var nFeat = predictors.size();
 var mtry  = ee.Number(nFeat).sqrt().floor();
 
@@ -567,7 +707,7 @@ var classifier = ee.Classifier.smileRandomForest({
 
 print('RF explain:', classifier.explain());
 
-// evaluate at default 0.5
+// Testing & Evaluation
 var testResult = testData.classify(classifier);
 var confusionMatrix = testResult.errorMatrix('label', 'classification');
 print('Confusion Matrix:', confusionMatrix);
@@ -597,16 +737,12 @@ var normalizedImportance = ee.Dictionary.fromLists(
     return ee.Number(v).divide(total);
   })
 );
+
 // Rename dictionary as ee.Dictionary
 var renameDict = ee.Dictionary({
-  'lulc': 'LULC',
-  'nbrMean': 'NBR',
-  'classesMean': 'Fuel Moisture',
-  'ndviMean': 'NDVI',
-  'lstMean': 'LST',
-  'slope': 'Slope',
-  'aspect': 'Aspect',
-  'elevation': 'Elevation'
+  'AGB': 'AGB',
+  'FuelType': 'Fuel Type',
+  'FM': 'Fuel Moisture'
 });
 
 // Map feature names and create FeatureCollection
@@ -711,12 +847,14 @@ Export.image.toDrive({
 // Optional: also export the continuous susceptibility probability at 30 m
 Export.image.toDrive({
   image: susceptibility, 
-  description: 'G22_Susceptibility_30m',
+  description: 'Susceptibility_Prob_250m',
   folder: 'GEE_Exports',
-  fileNamePrefix: 'G22_susceptibility30m_',
+  fileNamePrefix: 'susceptibility_prob_250m_' + countryName + '_' + year,
   region: studyRegion,
-  scale: 30,
+  scale: 250,
   maxPixels: 1e13,
-  crs: 'EPSG:32636'
+  crs: 'EPSG:4326'
 });
 
+Map.centerObject(table, 12);
+Map.addLayer(table, {color: 'blue'}, 'table');
