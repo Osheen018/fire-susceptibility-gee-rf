@@ -1,6 +1,6 @@
 # Forest Fire Susceptibility Mapping using Google Earth Engine
 
-Probability-based wildfire susceptibility model for Limassol (Cyprus),
+Probability-based wildfire predictive susceptibility model for Limassol (Cyprus),
 built in Google Earth Engine using Sentinel-1/2, Landsat 8/9, SRTM and a
 Random Forest classifier. Study period: 2019-2024 (April-November).
 
