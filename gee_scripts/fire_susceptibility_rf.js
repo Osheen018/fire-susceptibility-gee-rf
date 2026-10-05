@@ -1,5 +1,5 @@
 var countryName = 'Limassol';
-var year = 2026;
+var year = 2025;
 
 // Center map on Cyprus
 // 1. Center map and display boundary
@@ -9,8 +9,8 @@ Map.addLayer(studyRegion, {color: 'blue'}, 'Study Region');
 
 
 
-var startYear = 2020;
-var endYear = 2025;
+var startYear = 2019;
+var endYear = 2024;
 var startMonth = 4; // April
 var endMonth = 9; // Sep
 var startDate = ee.Date.fromYMD(startYear, startMonth, 1);
